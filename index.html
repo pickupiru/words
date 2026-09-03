@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swedish Word Trainer</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #f4f5f7; color: #202124;
+  }
+  .wrap { max-width: 900px; margin: 32px auto; padding: 0 20px; }
+  .card {
+    background: white; border-radius: 16px; padding: 28px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.08);
+  }
+  h1 { margin: 0 0 6px; }
+  .sub { color: #666; margin: 0 0 24px; }
+  textarea {
+    width: 100%; min-height: 250px; resize: vertical; padding: 14px;
+    border: 1px solid #c8c9cc; border-radius: 10px; font: 16px/1.5 Consolas, monospace;
+  }
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
+  .control {
+    border: 1px solid #ddd; border-radius: 10px; padding: 14px;
+  }
+  label { font-weight: 600; display: block; margin-bottom: 8px; }
+  input[type=number], select {
+    width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 8px; font-size: 16px;
+  }
+  .checks { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
+  .checks label { display: inline-flex; gap: 7px; align-items: center; margin: 0; font-weight: 500; }
+  .buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+  button {
+    border: 0; border-radius: 9px; padding: 11px 18px; font-size: 16px;
+    cursor: pointer; background: #e8eaed;
+  }
+  button.primary { background: #1a73e8; color: white; }
+  button.stop { background: #d93025; color: white; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .status {
+    margin-top: 22px; border-radius: 12px; padding: 22px; background: #f1f3f4;
+    text-align: center; min-height: 150px; display: flex; flex-direction: column;
+    justify-content: center;
+  }
+  .current { font-size: 42px; font-weight: 700; min-height: 58px; }
+  .progress { color: #666; margin-top: 8px; }
+  .hint { font-size: 13px; color: #666; margin-top: 14px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .row input { flex: 1; }
+  @media(max-width:650px) { .controls { grid-template-columns: 1fr; } .current {font-size: 32px;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>🇸🇪 Swedish Word Trainer</h1>
+    <p class="sub">Paste one Swedish word or phrase per line, then let your browser pronounce them in random order.</p>
+
+    <label for="words">Swedish words / phrases</label>
+    <textarea id="words" spellcheck="false">äpple
+fönster
+försöka
+springa
+bil
+hus
+kök
+dörr
+vän
+fråga</textarea>
+
+    <div class="controls">
+      <div class="control">
+        <label for="delay">Delay between words (seconds)</label>
+        <div class="row">
+          <input id="delay" type="number" min="0" max="60" step="0.5" value="3">
+          <span>sec</span>
+        </div>
+      </div>
+
+      <div class="control">
+        <label for="rate">Speech speed</label>
+        <div class="row">
+          <input id="rate" type="number" min="0.5" max="2" step="0.1" value="0.9">
+          <span>x</span>
+        </div>
+      </div>
+
+      <div class="control">
+        <label for="voice">Swedish voice</label>
+        <select id="voice"><option>Loading voices...</option></select>
+      </div>
+
+      <div class="control">
+        <label>Options</label>
+        <div class="checks">
+          <label><input type="checkbox" id="random" checked> Randomize</label>
+          <label><input type="checkbox" id="repeat"> Repeat</label>
+          <label><input type="checkbox" id="hideWord"> Hide word while speaking</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="buttons">
+      <button class="primary" id="start">▶ Start</button>
+      <button id="pause" disabled>⏸ Pause</button>
+      <button id="next" disabled>⏭ Next</button>
+      <button class="stop" id="stop" disabled>■ Stop</button>
+      <button id="test">🔊 Test voice</button>
+    </div>
+
+    <div class="status">
+      <div class="current" id="current">Ready</div>
+      <div class="progress" id="progress">0 / 0</div>
+    </div>
+
+    <p class="hint">
+      Tip: If several Swedish voices are installed on Windows, choose one in the dropdown.
+      The list is saved automatically in your browser on this PC.
+    </p>
+  </div>
+</div>
+
+<script>
+const wordsEl = document.getElementById('words');
+const delayEl = document.getElementById('delay');
+const rateEl = document.getElementById('rate');
+const voiceEl = document.getElementById('voice');
+const randomEl = document.getElementById('random');
+const repeatEl = document.getElementById('repeat');
+const hideEl = document.getElementById('hideWord');
+const startBtn = document.getElementById('start');
+const pauseBtn = document.getElementById('pause');
+const nextBtn = document.getElementById('next');
+const stopBtn = document.getElementById('stop');
+const testBtn = document.getElementById('test');
+const currentEl = document.getElementById('current');
+const progressEl = document.getElementById('progress');
+
+let voices = [];
+let queue = [];
+let index = 0;
+let running = false;
+let paused = false;
+let timer = null;
+let utterance = null;
+
+function saveSettings() {
+  localStorage.setItem('swt-words', wordsEl.value);
+  localStorage.setItem('swt-delay', delayEl.value);
+  localStorage.setItem('swt-rate', rateEl.value);
+  localStorage.setItem('swt-random', randomEl.checked);
+  localStorage.setItem('swt-repeat', repeatEl.checked);
+  localStorage.setItem('swt-hide', hideEl.checked);
+}
+function loadSettings() {
+  const w = localStorage.getItem('swt-words');
+  if (w !== null) wordsEl.value = w;
+  if (localStorage.getItem('swt-delay')) delayEl.value = localStorage.getItem('swt-delay');
+  if (localStorage.getItem('swt-rate')) rateEl.value = localStorage.getItem('swt-rate');
+  if (localStorage.getItem('swt-random') !== null) randomEl.checked = localStorage.getItem('swt-random') === 'true';
+  if (localStorage.getItem('swt-repeat') !== null) repeatEl.checked = localStorage.getItem('swt-repeat') === 'true';
+  if (localStorage.getItem('swt-hide') !== null) hideEl.checked = localStorage.getItem('swt-hide') === 'true';
+}
+function loadVoices() {
+  voices = speechSynthesis.getVoices();
+  const swedish = voices.filter(v => (v.lang || '').toLowerCase().startsWith('sv'));
+  voiceEl.innerHTML = '';
+  const list = swedish.length ? swedish : voices;
+  if (!list.length) {
+    voiceEl.innerHTML = '<option>No voices available</option>';
+    return;
+  }
+  list.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = voices.indexOf(v);
+    opt.textContent = `${v.name} (${v.lang})${v.localService ? ' — local' : ''}`;
+    voiceEl.appendChild(opt);
+  });
+}
+speechSynthesis.onvoiceschanged = loadVoices;
+loadSettings();
+loadVoices();
+
+function getWords() {
+  return wordsEl.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+}
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function selectedVoice() {
+  const i = Number(voiceEl.value);
+  return voices[i] || voices.find(v => v.lang.toLowerCase().startsWith('sv')) || null;
+}
+function setButtons() {
+  startBtn.disabled = running;
+  pauseBtn.disabled = !running;
+  nextBtn.disabled = !running;
+  stopBtn.disabled = !running;
+  pauseBtn.textContent = paused ? '▶ Resume' : '⏸ Pause';
+}
+function showProgress() {
+  progressEl.textContent = `${Math.min(index + 1, queue.length)} / ${queue.length}`;
+}
+function buildQueue() {
+  queue = getWords();
+  if (randomEl.checked) shuffle(queue);
+  index = 0;
+}
+function speakCurrent() {
+  clearTimeout(timer);
+  if (!running || paused) return;
+  if (index >= queue.length) {
+    if (repeatEl.checked) {
+      buildQueue();
+    } else {
+      running = false;
+      currentEl.textContent = 'Finished ✓';
+      progressEl.textContent = `${queue.length} / ${queue.length}`;
+      setButtons();
+      return;
+    }
+  }
+
+  const word = queue[index];
+  currentEl.textContent = hideEl.checked ? '🔊 Speaking…' : word;
+  showProgress();
+
+  speechSynthesis.cancel();
+  utterance = new SpeechSynthesisUtterance(word);
+  utterance.lang = 'sv-SE';
+  utterance.rate = Math.max(0.5, Math.min(2, Number(rateEl.value) || 0.9));
+  const v = selectedVoice();
+  if (v) utterance.voice = v;
+
+  utterance.onend = () => {
+    if (!running || paused) return;
+    index++;
+    const delay = Math.max(0, Number(delayEl.value) || 0) * 1000;
+    timer = setTimeout(speakCurrent, delay);
+  };
+  utterance.onerror = (e) => {
+    if (e.error !== 'canceled' && running) {
+      currentEl.textContent = 'Speech error — try another voice';
+      index++;
+      timer = setTimeout(speakCurrent, 1000);
+    }
+  };
+  speechSynthesis.speak(utterance);
+}
+function start() {
+  saveSettings();
+  const w = getWords();
+  if (!w.length) { alert('Please enter at least one word.'); return; }
+  buildQueue();
+  running = true;
+  paused = false;
+  setButtons();
+  speakCurrent();
+}
+function pauseResume() {
+  if (!running) return;
+  if (!paused) {
+    paused = true;
+    clearTimeout(timer);
+    speechSynthesis.pause();
+  } else {
+    paused = false;
+    speechSynthesis.resume();
+    // If the browser had already finished speech, continue.
+    if (!speechSynthesis.speaking) speakCurrent();
+  }
+  setButtons();
+}
+function next() {
+  if (!running) return;
+  speechSynthesis.cancel();
+  clearTimeout(timer);
+  paused = false;
+  index++;
+  speakCurrent();
+}
+function stop() {
+  running = false; paused = false;
+  clearTimeout(timer);
+  speechSynthesis.cancel();
+  currentEl.textContent = 'Stopped';
+  setButtons();
+}
+function testVoice() {
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance('Det här är ett test av den svenska rösten.');
+  u.lang = 'sv-SE';
+  u.rate = Number(rateEl.value) || 0.9;
+  const v = selectedVoice();
+  if (v) u.voice = v;
+  speechSynthesis.speak(u);
+}
+
+startBtn.onclick = start;
+pauseBtn.onclick = pauseResume;
+nextBtn.onclick = next;
+stopBtn.onclick = stop;
+testBtn.onclick = testVoice;
+
+[wordsEl, delayEl, rateEl, randomEl, repeatEl, hideEl].forEach(el => {
+  el.addEventListener('change', saveSettings);
+});
+</script>
+</body>
+</html>
